@@ -8,50 +8,45 @@ import shutil
 from selex.preprocessing import run_pandaseq
 from selex.extraction import process_sequences_regex_only
 from selex.analysis import compute_fold_change_by_round
-from selex.structure import add_similarity_column_and_auc  # 取消注释以启用结构分析
+from selex.structure import add_similarity_column_and_auc
 
 # ── 配置 ────────────────────────────────────────────────────────────────────
-DATA_DIR = "/home/hanlab/2022_zzm/3DSF-SELEX/data/PTK7"
+DATA_DIR = "/home/hanlab/2022_zzm/3DSF-SELEX/data/IFN-gamma"
 PATTERN  = r"TTCAGCACTCCACGATCTAAC([ACGT]{9}GCCG[ACGT]{12})CGGTTAGATCGTGCTACCGTGAA"
-ROUNDS   = [f"R{i}" for i in range(1, 11)]
-
-P7_ADAPTER = None
-P5_ADAPTER = None
 # ────────────────────────────────────────────────────────────────────────────
+
+
+def process_round(r_path, round_name, output_dir):
+    merged_fa = os.path.join(r_path, "merged.fa")
+    fre_output = os.path.join(r_path, "fre.csv")
+
+    if not os.path.exists(merged_fa):
+        f_fastq = glob.glob(os.path.join(r_path, "*1.f*q"))
+        r_fastq = glob.glob(os.path.join(r_path, "*2.f*q"))
+        if not f_fastq or not r_fastq:
+            print(f"Warning: {round_name} 缺少 FASTQ 文件，跳过")
+            return None
+        merged_fa = run_pandaseq(f_fastq[0], r_fastq[0], merged_fa)
+        if merged_fa is None:
+            return None
+
+    process_sequences_regex_only(merged_fa, PATTERN, fre_output)
+    shutil.copy(fre_output, os.path.join(output_dir, f"{round_name}_fre.csv"))
+    return fre_output
 
 
 def main():
     output_dir = os.path.join(DATA_DIR, "output")
     os.makedirs(output_dir, exist_ok=True)
 
-    fre_outputs = {}
-    for R_path in glob.glob(os.path.join(DATA_DIR, "*")):
-        round_name = os.path.basename(R_path)
-        if round_name not in ROUNDS:
-            continue
+    for r_path in sorted(glob.glob(os.path.join(DATA_DIR, "*"))):
+        round_name = os.path.basename(r_path)
+        process_round(r_path, round_name, output_dir)
 
-        # 双端拼接
-        merged_fa = os.path.join(R_path, "merged.fa")
-        if not os.path.exists(merged_fa):
-            f_fastq = glob.glob(os.path.join(R_path, "*1.f*q"))
-            r_fastq = glob.glob(os.path.join(R_path, "*2.f*q"))
-            merged_fa = run_pandaseq(
-                f_fastq[0], r_fastq[0], merged_fa,
-                p5_adapter=P5_ADAPTER, p7_adapter=P7_ADAPTER
-            )
+    fc_csv = os.path.join(output_dir, "fold_change.csv")
+    compute_fold_change_by_round(DATA_DIR, fc_csv)
 
-        # 序列提取
-        fre_output = os.path.join(R_path, "fre.csv")
-        fre_outputs[round_name] = process_sequences_regex_only(merged_fa, PATTERN, fre_output)
-
-        # 备份到 output 目录
-        shutil.copy(fre_output, os.path.join(output_dir, f"{round_name}_fre.csv"))
-
-    # Fold Change 计算
-    compute_fold_change_by_round(DATA_DIR, "fold_change.csv")
-
-    # 结构分析（可选）
-    add_similarity_column_and_auc("fold_change.csv", "fold_change_with_similarity.csv")
+    add_similarity_column_and_auc(fc_csv, os.path.join(output_dir, "fold_change_with_similarity.csv"))
 
 
 if __name__ == "__main__":
